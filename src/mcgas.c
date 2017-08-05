@@ -219,7 +219,7 @@ int correlation_time(void) {
 }
 
 void measure_volume(int N, double L, double T0, double T1, int steps) {
-	int equilibration_time = 1500;
+	int equilibration_time = 1000;
 	int measure_time = 5000;
 	char filename[256];
 	snprintf(filename,sizeof(filename),"data/N=%d_V=%f_T0=%f.csv",N,L*L,T0);

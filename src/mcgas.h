@@ -5,11 +5,11 @@
 #include <stdbool.h>
 
 #define GRAV -0. // gravitation
-#define CE 0.03 // coupling energy
+#define CE 1 // coupling energy
 #define CR0 0.01 // coupling energy
-#define R_CUTOFF 2*CR0
+#define R_CUTOFF 6*CR0
 
-#define MASS 1.0
+#define MASS 10.0
 
 #define MC_SIGX CR0*2
 #define MC_SIGP 1
@@ -22,7 +22,6 @@ enum {
 
 typedef struct Particle{
 	double x[2];
-	double p[2];
 
 	int histidx;
 } Particle;
@@ -33,6 +32,7 @@ typedef struct System {
 	double T;
 
 	double E;
+	double p;
 
 	Particle *parts;
 	int16_t *histgrid;

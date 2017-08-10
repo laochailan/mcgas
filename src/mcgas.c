@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 #include <stdio.h>
 #include <errno.h>
 
@@ -21,8 +22,6 @@ void system_init(System *s, int N, double L, double T) {
 		int iy = i%sN;
 		s->parts[i].x[0] = s->L/sN*(ix+0.5+(frand()*0.5-0.25));
 		s->parts[i].x[1] = s->L/sN*(iy+0.5+(frand()*0.5-0.25));
-		s->parts[i].p[0] = nfrand()*sqrt(MASS*s->T);
-		s->parts[i].p[1] = nfrand()*sqrt(MASS*s->T);
 	}
 	s->histgrid = calloc(HIST_W*HIST_H*HIST_D,sizeof(int16_t));
 	memset(s->histgrid,0,sizeof(int16_t)*HIST_W*HIST_H*HIST_D);
@@ -79,6 +78,7 @@ void system_hist_parts(System *s) {
 	}
 }
 
+/*
 double potential(double x[2], double y[2]) {
 	double d[2];
 	d[0] = x[0] - y[0];
@@ -86,44 +86,32 @@ double potential(double x[2], double y[2]) {
 	double r2 = (d[0]*d[0]+d[1]*d[1])/CR0/CR0+1e-9;
 	r2 = 1/(r2*r2*r2);
 	return CE*(r2*r2-2*r2);
-}
+}*/
 
 // https://spiral.imperial.ac.uk/bitstream/10044/1/262/1/edm2006jcp.pdf (1)
+// computes both the potential and the virial interaction part for the pressure
 void potential_rf(double x[2], double y[2], double *e, double *f) {
 	double d[2];
 	d[0] = x[0] - y[0];
 	d[1] = x[1] - y[1];
 	double r2 = (d[0]*d[0]+d[1]*d[1])/CR0/CR0+1e-9;
-	r2 = 1/(r2*r2*r2);
+	r2 = 1/(r2*r2);
 
 	double a = CE*r2*r2;
 	double b = CE*r2;
 	*e = a-2*b;
-	*f = 12*(a-b);
+	*f = 8*(a-b);
 }
 
-void system_mc_update(System *s) {
-	int i = random()%s->N;
-	double x[2],p[2],dp[2];
-	x[0] = s->parts[i].x[0]+nfrand()*MC_SIGX;
-	x[1] = s->parts[i].x[1]+nfrand()*MC_SIGX;
-
-	if(x[0] < 0 || x[0] > s->L || x[1] < 0 || x[1] > s->L)
-		return;
-	p[0] = s->parts[i].p[0];
-	p[1] = s->parts[i].p[1];
-	dp[0] = nfrand()*MC_SIGP;
-	dp[1] = nfrand()*MC_SIGP;
-
-	double dE = (p[0]*dp[0]+p[1]*dp[1])/MASS + (dp[0]*dp[0]+dp[1]*dp[1])/MASS/2;
-	dE += (x[1]-s->parts[i].x[1])*MASS*GRAV;
-
+void gather_particle_interaction(System *s, double x[2], int i, bool smaller_than_i, double *E, double *p) {
 	int rangex = R_CUTOFF/s->L*HIST_W+1;
 	int rangey = R_CUTOFF/s->L*HIST_H+1;
 	int idx = hist_index(s,x)/HIST_D;
 	int ix0 = idx/HIST_H;
 	int iy0 = idx%HIST_H;
 
+	*E = 0;
+	*p = 0;
 	for(int ix = -rangex; ix <= rangex; ix++) {
 		if(ix0+ix < 0 || ix0+ix >= HIST_W)
 			continue;
@@ -135,17 +123,40 @@ void system_mc_update(System *s) {
 				int j = s->histgrid[HIST_D*(HIST_H*(ix0+ix)+iy0+iy)+iz];
 				if(j == -1)
 					break;
-				if(j == i || j < 0)
+				if((smaller_than_i && j>i) ||j == i || j < 0)
 					continue;
-				dE += potential(x,s->parts[j].x)-potential(s->parts[i].x,s->parts[j].x);
+				double de, f;
+				potential_rf(x,s->parts[j].x, &de, &f);
+				*E+=de;
+				*p+=f;
 			}
 		}
 	}
+}
+
+void system_mc_update(System *s) {
+	int i = random()%s->N;
+	double x[2];
+	x[0] = s->parts[i].x[0]+nfrand()*MC_SIGX;
+	x[1] = s->parts[i].x[1]+nfrand()*MC_SIGX;
+
+	if(x[0] < 0 || x[0] > s->L || x[1] < 0 || x[1] > s->L)
+		return;
+	double dE = 0;
+	dE += (x[1]-s->parts[i].x[1])*MASS*GRAV;
+
+	double e, f;
+	double dp = 0;
+	gather_particle_interaction(s,x,i,false,&e,&f);
+	dE+=e;
+	dp+=f;
+	gather_particle_interaction(s,s->parts[i].x,i,false,&e,&f);
+	dE-=e;
+	dp-=f;
 
 	if(dE < 0 || frand() < exp(-dE/s->T)) {
 		s->parts[i].x[0] = x[0];
 		s->parts[i].x[1] = x[1];
-
 
 		int nhistidx = hist_index(s,x);
 		if(nhistidx/HIST_D != s->parts[i].histidx/HIST_D) {
@@ -157,9 +168,8 @@ void system_mc_update(System *s) {
 			s->histgrid[nhistidx+n] = i;
 			s->parts[i].histidx = nhistidx+n;
 		}
-		s->parts[i].p[0] = p[0]+dp[0];
-		s->parts[i].p[1] = p[1]+dp[1];
 		s->E += dE;
+		s->p += dp/2./s->L/s->L;
 	}
 }
 
@@ -180,51 +190,27 @@ void system_meanpos(System *s, double m[2]) {
 }
 
 void system_energypressure(System *s, double *sE, double *pressure) {
-	double E=0, rf=0, p[2];
+	double E=0, rf=0;
 
 	for(int i = 0; i < s->N; i++) {
-		p[0] = s->parts[i].p[0];
-		p[1] = s->parts[i].p[1];
-		E += (p[0]*p[0]+p[1]*p[1])/2/MASS;
 		E += GRAV*MASS*s->parts[i].x[1];
 
-		int rangex = R_CUTOFF/s->L*HIST_W+1;
-		int rangey = R_CUTOFF/s->L*HIST_H+1;
-		int idx = hist_index(s,s->parts[i].x)/HIST_D;
-		int ix0 = idx/HIST_H;
-		int iy0 = idx%HIST_H;
-
-		for(int ix = -rangex; ix <= rangex; ix++) {
-			if(ix0+ix < 0 || ix0+ix >= HIST_W)
-				continue;
-			for(int iy = -rangey; iy <= rangey; iy++) {
-
-				if(iy0+iy < 0 || iy0+iy >= HIST_H)
-					continue;
-				for(int iz = 0; iz < HIST_D; iz++) {
-					int j = s->histgrid[HIST_D*(HIST_H*(ix0+ix)+iy0+iy)+iz];
-					if(j >= i || j == -2)
-						continue;
-					if(j == -1)
-						break;
-					double e, f;
-					potential_rf(s->parts[i].x,s->parts[j].x,&e,&f);
-					E += e;
-					rf += f;
-				}
-			}
-		}
+		double dE, drf;
+		gather_particle_interaction(s,s->parts[i].x,i,true,&dE,&drf);
+		E+=dE;
+		rf+=drf;
 	}
 
 	*pressure = s->T*s->N/s->L/s->L + 1/2.*rf/s->L/s->L;
-	*sE = E;
+	*sE = E+s->T*s->N;
 }
 
 void measure(int N, double V0, double V1, int V_steps, double T0, double T1, int T_steps) {
-	int equilibration_time = 500+1000*(V1/N < 1.*CR0*CR0);
-	int measure_time = 4000;
+	int equilibration_time = 1000+0*1000*(V1/N < 1.*CR0*CR0);
+	int measure_time = 3000;
 	char filename[256];
-	snprintf(filename,sizeof(filename),"data/N=%d_V0=%f_T0=%f.csv",N,V0,T0);
+	srandom(time(0));
+	snprintf(filename,sizeof(filename),"data/N=%d_V0=%f_T0=%f.csv",N,V0/N/CR0/CR0,T0);
 	FILE *out = fopen(filename,"a");
 	if(out == 0) {
 		perror("measure_volume");
@@ -244,16 +230,20 @@ void measure(int N, double V0, double V1, int V_steps, double T0, double T1, int
 			s.T = T;
 			for(int j = 0; j < equilibration_time; j++)
 				system_mc_sweep(&s);
-			double E, p;
-			system_energypressure(&s, &E, &p);
-			s.E = E;
 			for(int j = 0; j < measure_time; j++) {
 				system_mc_sweep(&s);
-				system_energypressure(&s, &E, &p);
-				fprintf(out,"%.8e\t%.8e\t%.8e\t%.8e\n",L*L,T,E/N,p);
+				if(j % 500 == 0) {
+					double E, p;
+					system_energypressure(&s, &E, &p);
+					s.E=E;
+					s.p=p;
+				}
+
+				// printf("%d: %g %g %g %g\n",j,E,s.E,p,s.p);
+				fprintf(out,"%.8e\t%.8e\t%.8e\t%.8e\n",L*L/N/CR0/CR0,T,s.E/N,s.p*CR0*CR0);
 			}
 			fflush(out);
-			snprintf(filename,sizeof(filename),"pics/N=%d_V=%.2f_T=%.2f.webp",N,L*L,T);
+			snprintf(filename,sizeof(filename),"pics/N=%d_V=%.2f_T=%.2f.webp",N,L*L/N/CR0/CR0,T);
 			int rc = render_system(&r,&s,filename);
 			if(rc != 0) {
 				perror("render_system");
@@ -298,8 +288,8 @@ int main_constant_V(int argc, char **argv) {
 }*/
 
 int main(int argc, char **argv) {
-	int V_bigsteps = 43;
-	int V_steps = 3;
+	int V_bigsteps = 6;
+	int V_steps = 20;
 	if(argc != 2) {
 		printf("Usage: %s Vstep[0-%d]\n",argv[0],V_bigsteps-1);
 		return 1;
@@ -312,9 +302,9 @@ int main(int argc, char **argv) {
 	}
 
 	int N = 10000;
-	double V0 = 8;
-	double V1 = 0.05;
-	double T = 15;
+	double V0 = 5;
+	double V1 = 0.5;
+	double T = 1.5;
 
 	double V0i = V0+(V1-V0)/V_bigsteps*i;
 	double V1i = V0+(V1-V0)/V_bigsteps*(i+1);

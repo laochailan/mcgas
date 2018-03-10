@@ -206,7 +206,7 @@ void system_energypressure(System *s, double *sE, double *pressure) {
 }
 
 void measure(int N, double V0, double V1, int V_steps, double T0, double T1, int T_steps) {
-	int equilibration_time = 1000+0*1000*(V1/N < 1.*CR0*CR0);
+	int equilibration_time = 3000+0*1000*(V1/N < 1.*CR0*CR0);
 	int measure_time = 3000;
 	char filename[256];
 	srandom(time(0));
@@ -219,7 +219,7 @@ void measure(int N, double V0, double V1, int V_steps, double T0, double T1, int
 	Renderer r;
 	System s;
 	system_init(&s, N, sqrt(V0),T0);
-	for(int j = 0; j < equilibration_time; j++) // some more equilibration at the beginning
+	for(int j = 0; j < 3*equilibration_time; j++) // some more equilibration at the beginning
 		system_mc_sweep(&s);
 
 	for(int k = 0; k < V_steps; k++) {
@@ -289,7 +289,7 @@ int main_constant_V(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 	int V_bigsteps = 6;
-	int V_steps = 20;
+	int V_steps = 5;
 	if(argc != 2) {
 		printf("Usage: %s Vstep[0-%d]\n",argv[0],V_bigsteps-1);
 		return 1;
@@ -303,8 +303,8 @@ int main(int argc, char **argv) {
 
 	int N = 10000;
 	double V0 = 5;
-	double V1 = 0.5;
-	double T = 1.5;
+	double V1 = 0.05;
+	double T = 2.00;
 
 	double V0i = V0+(V1-V0)/V_bigsteps*i;
 	double V1i = V0+(V1-V0)/V_bigsteps*(i+1);
